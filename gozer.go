@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/jessevdk/go-flags"
-	"io/ioutil"
+	"github.com/kr/fs"
 	"fmt"
 	"os"
 //	"path/filepath"
@@ -14,26 +14,6 @@ var opts struct {
 	Help      bool   `short:"h" long:"help"   description:"Show help"`
 	Path      string `short:"p" long:"path"   description:"Path to begin search"`
 	Search    string `short:"s" long:"search" description:"String to search for."`
-}
-
-func is_directory(path string) (bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
-
-	fi, err := f.Stat()
-	if err != nil {
-		return false, err
-	}
-
-	switch mode := fi.Mode(); {
-		case mode.IsDir():
-			return true, nil
-	}
-
-	return false, nil
 }
 
 func path_exists(path string) (bool, error) {
@@ -56,18 +36,28 @@ func kwic_search(path string) {
 	}
 
 	if r {
-		files, _ := ioutil.ReadDir(path)
-		for _, f := range files {
-			r, err := is_directory(f.Name())
-			if err != nil {
-				fmt.Print("Error 2\n")
+		fmt.Printf("Walking path: %s\n", path)
+		walker := fs.Walk(path)
+		for walker.Step() {
+			// if the path we're searching is the path we're on then let's
+			// take a step back and ask ourselves what problem are we solving?
+			if path == walker.Path() {
+				walker.Step()
+				continue
 			}
-			if r {
-				fmt.Printf("Directory: %s\n", f.Name())
-				kwic_search(f.Name())
+
+			if err := walker.Err(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				continue
+			}
+
+			fi := walker.Stat()
+			if fi.IsDir() {
+				kwic_search(walker.Path())
 			} else {
-				fmt.Printf("Indexing file: %s\n", f.Name())
+				fmt.Printf("Indexing file: %s\n", walker.Path())
 			}
+
 		}
 	} else {
 		fmt.Printf("Path does not exist: %s", path)
@@ -87,6 +77,7 @@ func main() {
 		return
 	}
 
+	// le debug
 	if len(os.Args[1:]) > 0 {
 		fmt.Printf("Search: %s\n", opts.Search)
 		fmt.Printf("Path: %s\n", opts.Path)
