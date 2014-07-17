@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/go-martini/martini"
 	"github.com/jessevdk/go-flags"
 	"github.com/kr/fs"
 	"fmt"
@@ -64,6 +65,14 @@ func kwic_search(path string) {
 	}
 }
 
+func search(path string) {
+	if path != "" {
+		kwic_search(path)
+	} else {
+		kwic_search("./")
+	}
+}
+
 func main() {
 	argparser := flags.NewParser(&opts, flags.PrintErrors|flags.PassDoubleDash)
 
@@ -85,10 +94,16 @@ func main() {
 		fmt.Printf("Daemonize: %t\n", opts.Daemonize)
 	}
 
-	if opts.Path != "" {
-		kwic_search(opts.Path)
+	// le martini stub
+	if opts.Daemonize {
+		m := martini.Classic()
+		m.Get("/", func() string {
+			search(opts.Path)
+			return "Search finished."
+		})
+		m.Run()
 	} else {
-		kwic_search("./")
+		search(opts.Path)
 	}
 
 }
