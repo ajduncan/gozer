@@ -6,11 +6,11 @@ import (
 	"github.com/kr/fs"
 	"index/suffixarray"
 	"io/ioutil"
+	_ "github.com/mattn/go-sqlite3"
 	"fmt"
 	"os"
-//	"path/filepath"
+	"strconv"
 )
-
 
 var opts struct {
 	Daemonize bool   `short:"d"               description:"Run continuous indexing as a daemon."`
@@ -18,6 +18,7 @@ var opts struct {
 	Path      string `short:"p" long:"path"   description:"Path to begin search"`
 	Search    string `short:"s" long:"search" description:"String to search for."`
 }
+
 
 func path_exists(path string) (bool, error) {
 	_, err := os.Stat(path)
@@ -39,7 +40,7 @@ func index_search(path string, stf string) {
 	}
 
 	if r {
-		fmt.Printf("Walking path: %s\n", path)
+		// fmt.Printf("Walking path: %s\n", path)
 		walker := fs.Walk(path)
 		for walker.Step() {
 			// if the path we're searching is the path we're on then let's
@@ -58,7 +59,7 @@ func index_search(path string, stf string) {
 			if fi.IsDir() {
 				index_search(walker.Path(), stf)
 			} else {
-				fmt.Printf("Indexing file: %s\n", walker.Path())
+				// fmt.Printf("Indexing file: %s\n", walker.Path())
 				data, err := ioutil.ReadFile(walker.Path())
 				if err != nil {
 					fmt.Fprintln(os.Stderr, err)
@@ -67,7 +68,9 @@ func index_search(path string, stf string) {
 				index := suffixarray.New(data)
 				s := index.Lookup([]byte(stf), 1)
 				if len(s) > 0 {
-					fmt.Printf("Found match at: %s", s[0])
+					padding := s[0] + 25
+					if padding > cap(data) { padding = cap(data) }
+					fmt.Printf("%s(%s): %s\n", walker.Path(), strconv.Itoa(s[0]), data[s[0]:padding])
 				}
 			}
 		}
@@ -109,7 +112,10 @@ func main() {
 	if opts.Daemonize {
 		m := martini.Classic()
 		m.Get("/", func() string {
-			search(opts.Path, opts.Search)
+			return "Main index... use /search/<key>."
+		})
+		m.Get("/search/:key", func (params martini.Params) string {
+			search(opts.Path, params["key"])
 			return "Search finished."
 		})
 		m.Run()
