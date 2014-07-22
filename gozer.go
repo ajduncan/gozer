@@ -3,16 +3,20 @@ package main
 import (
 	"bytes"
 	"github.com/go-martini/martini"
+	"github.com/martini-contrib/render"
 	"github.com/jessevdk/go-flags"
 	"github.com/kr/fs"
 	"github.com/pmylund/go-cache"
 	"index/suffixarray"
 	"io/ioutil"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
 )
+
+const CACHE_DB string = "./gatekeeper.db"
 
 var opts struct {
 	Daemonize bool   `short:"d"               description:"Run continuous indexing as a daemon."`
@@ -21,13 +25,13 @@ var opts struct {
 	Search    string `short:"s" long:"search" description:"String to search for."`
 }
 
-type Keymaster struct {
-	index int
-	path string
-	context string
-}
-
 var gatekeeper = cache.New(30*time.Minute, 180*time.Second)
+
+type Keymaster struct {
+	Index int
+	Path string
+	Context string
+}
 
 
 func path_exists(path string) (bool, error) {
@@ -41,6 +45,21 @@ func path_exists(path string) (bool, error) {
 	}
 
 	return false, err
+}
+
+func save_result(stf string, index int, path string, context string) {
+	if km_docs, found := gatekeeper.Get(stf); found {
+		di := Keymaster{index, path, context}
+		km_docs = append(km_docs.([]Keymaster), di)
+		gatekeeper.Set(stf, km_docs, 0)
+	} else {
+		var document_indexes []Keymaster
+		di := Keymaster{index, path, context}
+		document_indexes = append(document_indexes, di)
+		gatekeeper.Set(stf, document_indexes, 0)
+	}
+
+	fmt.Printf("%s(%s): %s\n", path, strconv.Itoa(index), context)
 }
 
 func index_search(path string, stf string) {
@@ -76,22 +95,9 @@ func index_search(path string, stf string) {
 				index := suffixarray.New(data)
 				s := index.Lookup([]byte(stf), 1)
 				if len(s) > 0 {
-					fmt.Printf("Indexing file: %s\n", walker.Path())
 					padding := s[0] + 25
 					if padding > cap(data) { padding = cap(data) }
-
-					if km_docs, found := gatekeeper.Get(stf); found {
-						di := Keymaster{s[0], walker.Path(), string(data[s[0]:padding])}
-						km_docs = append(km_docs.([]Keymaster), di)
-						gatekeeper.Set(stf, km_docs, 0)
-					} else {
-						var document_indexes []Keymaster
-						di := Keymaster{s[0], walker.Path(), string(data[s[0]:padding])}
-						document_indexes = append(document_indexes, di)
-						gatekeeper.Set(stf, document_indexes, 0)
-					}
-
-					fmt.Printf("%s(%s): %s\n", walker.Path(), strconv.Itoa(s[0]), data[s[0]:padding])
+					save_result(stf, s[0], walker.Path(), string(data[s[0]:padding]))
 				}
 			}
 		}
@@ -104,15 +110,15 @@ func km_string(km_doc []Keymaster) (km_string string) {
     var result bytes.Buffer
 
 	for _, value := range km_doc {
-		result.WriteString(value.path + "(" + strconv.Itoa(value.index) + ") ... " + value.context + " ... \n")
+		result.WriteString(value.Path + "(" + strconv.Itoa(value.Index) + ") ... " + value.Context + " ... ")
 	}
 
 	return result.String()
 }
 
-func search(path string, stf string) (result string) {
+func search(path string, stf string) (result []Keymaster) {
 	if key, found := gatekeeper.Get(stf); found {
-		return km_string(key.([]Keymaster))
+		return key.([]Keymaster)
 	} else {
 		if path != "" {
 			index_search(path, stf)
@@ -120,9 +126,9 @@ func search(path string, stf string) (result string) {
 			index_search("./", stf)
 		}
 		if key, found := gatekeeper.Get(stf); found {
-			return km_string(key.([]Keymaster))
+			return key.([]Keymaster)
 		} else {
-			return "None found."
+			return nil
 		}
 	}
 }
@@ -140,26 +146,53 @@ func main() {
 		return
 	}
 
-	// le debug
-	if len(os.Args[1:]) > 0 {
-		fmt.Printf("Search: %s\n", opts.Search)
-		fmt.Printf("Path: %s\n", opts.Path)
-		fmt.Printf("Help: %t\n", opts.Help)
-		fmt.Printf("Daemonize: %t\n", opts.Daemonize)
+	// load cache from disk if available.
+	if _, err := os.Stat(CACHE_DB); err == nil {
+		fmt.Printf("Loading gatekeeper db from disk.")
+		if err := gatekeeper.LoadFile(CACHE_DB); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
 	}
 
-	// le martini stub
+	// save cache periodically.
+	gk_ticker      := time.NewTicker(60 * time.Second)
+	gk_ticker_quit := make(chan struct{})
+	go func() {
+		for {
+			select {
+				case <- gk_ticker.C:
+					fmt.Printf("Saving DB to disk...")
+					if err := gatekeeper.SaveFile(CACHE_DB); err != nil {
+						fmt.Fprintln(os.Stderr, err)
+					}
+				case <- gk_ticker_quit:
+					gk_ticker.Stop()
+					return
+			}
+		}
+	}()
+	// close(gk_ticker_quit) to end the timer.
+
 	if opts.Daemonize {
 		m := martini.Classic()
-		m.Get("/", func() string {
-			return "Main index... use /search/<key>."
+		m.Use(render.Renderer(render.Options{
+			Layout: "layout",
+		}))
+
+		m.Get("/", func(r render.Render) {
+			r.HTML(200, "index", "")
 		})
-		m.Get("/search/:key", func (params martini.Params) string {
-			return search(opts.Path, params["key"])
+		m.Get("/search/", func (params martini.Params, request *http.Request, r render.Render) {
+			search_query := request.URL.Query().Get("search")
+			fmt.Printf("Searching for: %s", search_query)
+			results := search(opts.Path, search_query)
+			fmt.Printf("Got results: %s", results)
+			content := map[string]interface{}{"results": results}
+			r.HTML(200, "results", content)
 		})
 		m.Run()
 	} else {
-		fmt.Printf("%s\n", search(opts.Path, opts.Search))
+		fmt.Printf("%s\n", km_string(search(opts.Path, opts.Search)))
 	}
 
 }

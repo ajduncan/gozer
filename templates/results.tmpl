@@ -1,0 +1,8 @@
+<h1>Search Results</h1>
+
+<ol>
+{{ $results := .results }}
+{{ range $item := $results }}
+	<li>{{ $item.Path }}({{ $item.Index }}): {{ $item.Context }} ...</li>
+{{ end }}
+</ol>
