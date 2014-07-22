@@ -5,6 +5,7 @@ Gozer aims to be a simple command line utility which searches for keyword in con
 ## Building ##
 
 	$ go get github.com/tools/godep
+	$ godep go build
 
 ## Running ##
 
