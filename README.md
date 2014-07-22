@@ -2,6 +2,10 @@
 
 Gozer aims to be a simple command line utility which searches for keyword in context strings.  Gozer may also be daemonized and run on several machines with a shared key, to perform index searching, possibly useful for log file searching in the cloud.
 
+## Building ##
+
+	$ go get github.com/tools/godep
+
 ## Running ##
 
 	$ ./gozer -d

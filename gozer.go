@@ -1,10 +1,9 @@
-package main
+package gozer
 
 import (
 	"bytes"
 	"github.com/go-martini/martini"
 	"github.com/martini-contrib/render"
-	"github.com/jessevdk/go-flags"
 	"github.com/kr/fs"
 	"github.com/pmylund/go-cache"
 	"index/suffixarray"
@@ -18,7 +17,7 @@ import (
 
 const CACHE_DB string = "./gatekeeper.db"
 
-var opts struct {
+var Opts struct {
 	Daemonize bool   `short:"d"               description:"Run continuous indexing as a daemon."`
 	Help      bool   `short:"h" long:"help"   description:"Show help"`
 	Path      string `short:"p" long:"path"   description:"Path to begin search"`
@@ -106,7 +105,7 @@ func index_search(path string, stf string) {
 	}
 }
 
-func km_string(km_doc []Keymaster) (km_string string) {
+func KM_string(km_doc []Keymaster) (km_string string) {
     var result bytes.Buffer
 
 	for _, value := range km_doc {
@@ -116,7 +115,7 @@ func km_string(km_doc []Keymaster) (km_string string) {
 	return result.String()
 }
 
-func search(path string, stf string) (result []Keymaster) {
+func Search(path string, stf string) (result []Keymaster) {
 	if key, found := gatekeeper.Get(stf); found {
 		return key.([]Keymaster)
 	} else {
@@ -133,19 +132,27 @@ func search(path string, stf string) (result []Keymaster) {
 	}
 }
 
-func main() {
-	argparser := flags.NewParser(&opts, flags.PrintErrors|flags.PassDoubleDash)
+func Daemonize() {
+	m := martini.Classic()
+	m.Use(render.Renderer(render.Options{
+		Layout: "layout",
+	}))
 
-	_, err := argparser.Parse()
-	if err != nil {
-		return
-	}
+	m.Get("/", func(r render.Render) {
+		r.HTML(200, "index", "")
+	})
+	m.Get("/search/", func (params martini.Params, request *http.Request, r render.Render) {
+		search_query := request.URL.Query().Get("search")
+		fmt.Printf("Searching for: %s", search_query)
+		results := Search(Opts.Path, search_query)
+		fmt.Printf("Got results: %s", results)
+		content := map[string]interface{}{"results": results}
+		r.HTML(200, "results", content)
+	})
+	m.Run()
+}
 
-	if opts.Help || len(os.Args[1:]) == 0 {
-		argparser.WriteHelp(os.Stdout)
-		return
-	}
-
+func LoadCache() {
 	// load cache from disk if available.
 	if _, err := os.Stat(CACHE_DB); err == nil {
 		fmt.Printf("Loading gatekeeper db from disk.")
@@ -153,7 +160,9 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 		}
 	}
+}
 
+func SaveCache() {
 	// save cache periodically.
 	gk_ticker      := time.NewTicker(60 * time.Second)
 	gk_ticker_quit := make(chan struct{})
@@ -172,27 +181,4 @@ func main() {
 		}
 	}()
 	// close(gk_ticker_quit) to end the timer.
-
-	if opts.Daemonize {
-		m := martini.Classic()
-		m.Use(render.Renderer(render.Options{
-			Layout: "layout",
-		}))
-
-		m.Get("/", func(r render.Render) {
-			r.HTML(200, "index", "")
-		})
-		m.Get("/search/", func (params martini.Params, request *http.Request, r render.Render) {
-			search_query := request.URL.Query().Get("search")
-			fmt.Printf("Searching for: %s", search_query)
-			results := search(opts.Path, search_query)
-			fmt.Printf("Got results: %s", results)
-			content := map[string]interface{}{"results": results}
-			r.HTML(200, "results", content)
-		})
-		m.Run()
-	} else {
-		fmt.Printf("%s\n", km_string(search(opts.Path, opts.Search)))
-	}
-
 }
