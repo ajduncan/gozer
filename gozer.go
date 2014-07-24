@@ -22,6 +22,7 @@ func main() {
 		return
 	}
 
+	gozer.Init()
 	gozer.LoadCache()
 	gozer.SaveCache()
 

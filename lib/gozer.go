@@ -6,11 +6,14 @@ import (
 	"github.com/martini-contrib/render"
 	"github.com/kr/fs"
 	"github.com/pmylund/go-cache"
+	"github.com/op/go-logging"
+
 	"index/suffixarray"
 	"io/ioutil"
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"time"
 )
@@ -25,6 +28,8 @@ var Opts struct {
 }
 
 var gatekeeper = cache.New(30*time.Minute, 180*time.Second)
+
+var log = logging.MustGetLogger("gozer_log")
 
 type Keymaster struct {
 	Index int
@@ -44,6 +49,16 @@ func path_exists(path string) (bool, error) {
 	}
 
 	return false, err
+}
+
+func safe_context(context string) (safe string) {
+	reg, err := regexp.Compile("[^A-Za-z0-9]+")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	safe = reg.ReplaceAllString(context, ".")
+	return safe
 }
 
 func save_result(stf string, index int, path string, context string) {
@@ -96,7 +111,7 @@ func index_search(path string, stf string) {
 				if len(s) > 0 {
 					padding := s[0] + 25
 					if padding > cap(data) { padding = cap(data) }
-					save_result(stf, s[0], walker.Path(), string(data[s[0]:padding]))
+					save_result(stf, s[0], walker.Path(), safe_context(string(data[s[0]:padding])))
 				}
 			}
 		}
@@ -133,6 +148,8 @@ func Search(path string, stf string) (result []Keymaster) {
 }
 
 func Daemonize() {
+	log.Debug("Daemonizing.")
+
 	m := martini.Classic()
 	m.Use(render.Renderer(render.Options{
 		Layout: "layout",
@@ -181,4 +198,10 @@ func SaveCache() {
 		}
 	}()
 	// close(gk_ticker_quit) to end the timer.
+}
+
+func Init() {
+	logging.SetFormatter(logging.MustStringFormatter("▶ %{level:.1s} 0x%{id:x} %{message}"))
+	logging.SetLevel(logging.INFO, "package.example")
+
 }
